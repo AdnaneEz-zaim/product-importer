@@ -1,5 +1,6 @@
 package com.adelean.importer.elasticsearch;
 
+import com.adelean.importer.exception.IndexingException;
 import com.adelean.importer.indexing.ProductIndexer;
 import com.adelean.importer.model.ProductDocument;
 import org.elasticsearch.action.bulk.BackoffPolicy;
@@ -79,8 +80,8 @@ public class ElasticsearchBulkProductIndexer
                 product.getArticleSku();
 
         if (articleSku == null || articleSku.isBlank()) {
-            throw new IllegalArgumentException(
-                    "Product article_sku must not be empty"
+            throw new IndexingException(
+                    "Cannot index product without article_sku"
             );
         }
 
@@ -102,7 +103,7 @@ public class ElasticsearchBulkProductIndexer
                     );
 
             if (!completed) {
-                throw new IllegalStateException(
+                throw new IndexingException(
                         "Bulk processor did not terminate within 30 seconds"
                 );
             }
@@ -110,13 +111,13 @@ public class ElasticsearchBulkProductIndexer
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
 
-            throw new IllegalStateException(
-                    "Interrupted while waiting for bulk requests",
+            throw new IndexingException(
+                    "Interrupted while waiting for Elasticsearch bulk requests",
                     exception
             );
         }
     }
-
+    
     private BulkProcessor.Listener createListener() {
         return new BulkProcessor.Listener() {
 
@@ -135,7 +136,7 @@ public class ElasticsearchBulkProductIndexer
                     BulkResponse response
             ) {
                 if (response.hasFailures()) {
-                    throw new IllegalStateException(
+                    System.err.println(
                             "Bulk indexing completed with failures: "
                                     + response.buildFailureMessage()
                     );
@@ -148,9 +149,9 @@ public class ElasticsearchBulkProductIndexer
                     BulkRequest request,
                     Throwable failure
             ) {
-                throw new IllegalStateException(
-                        "Bulk indexing failed",
-                        failure
+                System.err.println(
+                        "Bulk indexing failed: "
+                                + failure.getMessage()
                 );
             }
         };
