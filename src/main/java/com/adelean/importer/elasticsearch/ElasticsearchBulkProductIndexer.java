@@ -17,8 +17,25 @@ import org.elasticsearch.common.unit.TimeValue;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 
+import com.adelean.importer.exception.IndexingException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
+
 public class ElasticsearchBulkProductIndexer
         implements ProductIndexer {
+    private static final Logger LOGGER =
+            LoggerFactory.getLogger(
+                    ElasticsearchBulkProductIndexer.class
+            );
+
+    // Bulk callbacks may run asynchronously.
+    // Store the first failure so it can be propagated
+    // from close() back to the main application flow.
+    private final AtomicReference<Throwable> bulkFailure =
+            new AtomicReference<>();
 
     private final String indexName;
     private final BulkProcessor bulkProcessor;
@@ -108,6 +125,18 @@ public class ElasticsearchBulkProductIndexer
                 );
             }
 
+            Throwable failure =
+                    bulkFailure.get();
+
+            // Exceptions thrown inside asynchronous callbacks do not
+            // propagate to the main thread, so rethrow the stored failure here.
+            if (failure != null) {
+                throw new IndexingException(
+                        "One or more Elasticsearch bulk requests failed",
+                        failure
+                );
+            }
+
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
 
@@ -126,7 +155,11 @@ public class ElasticsearchBulkProductIndexer
                     long executionId,
                     BulkRequest request
             ) {
-                // Logging (pour apres
+                LOGGER.info(
+                        "Sending bulk {} containing {} documents",
+                        executionId,
+                        request.numberOfActions()
+                );
             }
 
             @Override
@@ -136,11 +169,34 @@ public class ElasticsearchBulkProductIndexer
                     BulkResponse response
             ) {
                 if (response.hasFailures()) {
-                    System.err.println(
-                            "Bulk indexing completed with failures: "
-                                    + response.buildFailureMessage()
+
+                    IndexingException failure =
+                            new IndexingException(
+                                    "Bulk indexing completed with failures: "
+                                            + response.buildFailureMessage()
+                            );
+
+                    // Keep the first failure, which is usually the most useful
+                    // one for diagnosing the root cause.
+                    bulkFailure.compareAndSet(
+                            null,
+                            failure
                     );
+
+                    LOGGER.error(
+                            "Bulk {} completed with failures: {}",
+                            executionId,
+                            response.buildFailureMessage()
+                    );
+
+                    return;
                 }
+
+                LOGGER.info(
+                        "Bulk {} successfully indexed {} documents",
+                        executionId,
+                        request.numberOfActions()
+                );
             }
 
             @Override
@@ -149,9 +205,15 @@ public class ElasticsearchBulkProductIndexer
                     BulkRequest request,
                     Throwable failure
             ) {
-                System.err.println(
-                        "Bulk indexing failed: "
-                                + failure.getMessage()
+                bulkFailure.compareAndSet(
+                        null,
+                        failure
+                );
+
+                LOGGER.error(
+                        "Bulk {} failed",
+                        executionId,
+                        failure
                 );
             }
         };
