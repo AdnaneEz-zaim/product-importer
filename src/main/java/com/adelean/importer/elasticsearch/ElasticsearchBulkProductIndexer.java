@@ -117,7 +117,7 @@ public class ElasticsearchBulkProductIndexer
             );
         }
     }
-    
+
     private BulkProcessor.Listener createListener() {
         return new BulkProcessor.Listener() {
 
